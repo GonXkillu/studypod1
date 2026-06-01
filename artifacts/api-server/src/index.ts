@@ -1,5 +1,12 @@
-import app from "./app";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createApp } from "./app";
 import { logger } from "./lib/logger";
+
+const _dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = path.resolve(_dirname, "../public");
+
+const app = createApp(publicDir);
 
 const rawPort = process.env["PORT"];
 

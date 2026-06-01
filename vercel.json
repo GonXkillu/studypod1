@@ -1,15 +1,15 @@
 {
   "version": 2,
   "buildCommand": "npm install -g pnpm && pnpm install && pnpm --filter @workspace/api-server run build",
-  "outputDirectory": ".",
   "functions": {
-    "artifacts/api-server/dist/vercel-entry.mjs": {
-      "includeFiles": "artifacts/api-server/public/**",
+    "api/index.mjs": {
+      "includeFiles": "api/public/**",
       "memory": 512,
-      "maxDuration": 10
+      "maxDuration": 30
     }
   },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/artifacts/api-server/dist/vercel-entry.mjs" }
+    { "source": "/(.*)", "destination": "/api/index" }
   ]
 }
+
