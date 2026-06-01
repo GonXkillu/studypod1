@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StudyPod Scheduler — My Reservations</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="/dashboard" class="navbar-brand">📚 StudyPod</a>
+  <div class="navbar-links">
+    <a href="/dashboard">Rooms</a>
+    <a href="/my-reservations" class="active">My Reservations</a>
+    <a href="/admin" class="admin-only" id="adminLink">Admin</a>
+    <a href="/reports" class="admin-only" id="reportsLink">Reports</a>
+  </div>
+  <div class="navbar-user">
+    <span id="userName"></span>
+    <button class="btn-logout" onclick="logout()">Sign Out</button>
+  </div>
+</nav>
+
+<div class="page">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:1rem;">
+    <h1 class="page-title" style="margin:0;">My Reservations</h1>
+    <a href="/dashboard" class="btn btn-outline">+ New Reservation</a>
+  </div>
+
+  <div id="alert" class="alert"></div>
+
+  <div class="card" style="padding:0;">
+    <div id="content"><div class="loading">Loading your reservations…</div></div>
+  </div>
+</div>
+
+<script>
+  let currentUser = null;
+
+  (async () => {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) { window.location.href = '/'; return; }
+    const data = await res.json();
+    currentUser = data.user;
+    document.getElementById('userName').textContent = currentUser.name;
+    if (currentUser.role === 'admin') {
+      document.getElementById('adminLink').style.display = '';
+      document.getElementById('reportsLink').style.display = '';
+    }
+    loadReservations();
+  })();
+
+  async function loadReservations() {
+    try {
+      const res = await fetch('/api/reservations/my');
+      if (!res.ok) throw new Error();
+      const { reservations } = await res.json();
+      if (!reservations.length) {
+        document.getElementById('content').innerHTML = `
+          <div class="empty-state">
+            <h3>No reservations yet</h3>
+            <p>Go to <a href="/dashboard">Rooms</a> to book a study space.</p>
+          </div>`;
+        return;
+      }
+      document.getElementById('content').innerHTML = `
+        <div class="table-wrapper" style="border:none;border-radius:0;">
+          <table>
+            <thead>
+              <tr>
+                <th>Room</th>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Notes</th>
+                <th>Status</th>
+                <th>Booked On</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="tbody">
+              ${reservations.map(r => `
+                <tr id="row-${r.id}">
+                  <td><strong>${esc(r.roomName || 'Unknown Room')}</strong><br><span class="text-muted">Cap. ${r.roomCapacity}</span></td>
+                  <td>${r.date}</td>
+                  <td>${r.startTime} – ${r.endTime}</td>
+                  <td>${r.notes ? esc(r.notes) : '<span class="text-muted">—</span>'}</td>
+                  <td><span class="badge badge-${r.status}">${r.status}</span></td>
+                  <td class="text-muted">${new Date(r.createdAt).toLocaleDateString()}</td>
+                  <td>
+                    ${r.status === 'active' ? `<button class="btn btn-danger btn-sm" onclick="cancelReservation(${r.id})">Cancel</button>` : ''}
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    } catch {
+      document.getElementById('content').innerHTML = '<div class="empty-state"><h3>Failed to load reservations.</h3></div>';
+    }
+  }
+
+  async function cancelReservation(id) {
+    if (!confirm('Are you sure you want to cancel this reservation?')) return;
+    try {
+      const res = await fetch('/api/reservations/' + id, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) { showAlert(data.error || 'Failed to cancel', 'error'); return; }
+      showAlert('Reservation cancelled successfully.', 'success');
+      loadReservations();
+    } catch { showAlert('Network error. Please try again.', 'error'); }
+  }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    window.location.href = '/';
+  }
+
+  function showAlert(text, type) {
+    const el = document.getElementById('alert');
+    el.textContent = text; el.className = 'alert show alert-' + type;
+    setTimeout(() => el.className = 'alert', 5000);
+  }
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+</script>
+</body>
+</html>

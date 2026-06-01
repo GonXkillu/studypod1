@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StudyPod Scheduler — Dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="/dashboard" class="navbar-brand">📚 StudyPod</a>
+  <div class="navbar-links">
+    <a href="/dashboard" class="active">Rooms</a>
+    <a href="/my-reservations">My Reservations</a>
+    <a href="/admin" class="admin-only" id="adminLink">Admin</a>
+    <a href="/reports" class="admin-only" id="reportsLink">Reports</a>
+  </div>
+  <div class="navbar-user">
+    <span id="userName"></span>
+    <button class="btn-logout" onclick="logout()">Sign Out</button>
+  </div>
+</nav>
+
+<div class="page">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:1rem;">
+    <h1 class="page-title" style="margin:0;">Available Study Rooms</h1>
+    <div style="display:flex;align-items:center;gap:0.75rem;">
+      <label class="form-label" style="margin:0;white-space:nowrap;">Select date:</label>
+      <input type="date" id="selectedDate" class="form-control" style="width:auto;" />
+    </div>
+  </div>
+
+  <div id="alert" class="alert"></div>
+  <div id="rooms" class="rooms-grid"><div class="loading">Loading rooms…</div></div>
+</div>
+
+<!-- Reservation Modal -->
+<div class="modal-overlay" id="reserveModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title" id="modalRoomName">Reserve Room</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div id="modalAlert" class="alert"></div>
+    <div id="availabilityView" class="mb-1"></div>
+    <form id="reserveForm" onsubmit="handleReserve(event)">
+      <input type="hidden" id="reserveRoomId" />
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Start Time</label>
+          <input type="time" id="startTime" class="form-control" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label">End Time</label>
+          <input type="time" id="endTime" class="form-control" required />
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Notes (optional)</label>
+        <input type="text" id="notes" class="form-control" placeholder="e.g. Group study for finals" maxlength="500" />
+      </div>
+      <div style="display:flex;gap:.75rem;justify-content:flex-end;">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="reserveBtn">Confirm Reservation</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  let currentUser = null;
+  let selectedDate = '';
+
+  (async () => {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) { window.location.href = '/'; return; }
+    const data = await res.json();
+    currentUser = data.user;
+    document.getElementById('userName').textContent = currentUser.name;
+    if (currentUser.role === 'admin') {
+      document.getElementById('adminLink').style.display = '';
+      document.getElementById('reportsLink').style.display = '';
+    }
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('selectedDate').value = today;
+    selectedDate = today;
+    loadRooms();
+  })();
+
+  document.getElementById('selectedDate').addEventListener('change', function () {
+    selectedDate = this.value;
+    loadRooms();
+  });
+
+  async function loadRooms() {
+    document.getElementById('rooms').innerHTML = '<div class="loading">Loading rooms…</div>';
+    try {
+      const res = await fetch('/api/rooms');
+      if (!res.ok) throw new Error();
+      const { rooms } = await res.json();
+      if (!rooms.length) {
+        document.getElementById('rooms').innerHTML = '<div class="empty-state"><h3>No rooms available</h3><p>Check back later.</p></div>';
+        return;
+      }
+      document.getElementById('rooms').innerHTML = rooms.map(room => `
+        <div class="room-card" onclick="openModal(${room.id}, '${esc(room.name)}')">
+          <h3>${esc(room.name)}</h3>
+          <p class="room-meta">Capacity: ${room.capacity} people</p>
+          ${room.description ? `<p class="room-meta">${esc(room.description)}</p>` : ''}
+          <span class="room-badge">Reserve →</span>
+        </div>
+      `).join('');
+    } catch { document.getElementById('rooms').innerHTML = '<div class="empty-state"><h3>Failed to load rooms</h3></div>'; }
+  }
+
+  async function openModal(roomId, roomName) {
+    document.getElementById('reserveRoomId').value = roomId;
+    document.getElementById('modalRoomName').textContent = 'Reserve: ' + roomName;
+    document.getElementById('reserveModal').classList.add('open');
+    showModalAlert('', '');
+    document.getElementById('availabilityView').innerHTML = '<p class="text-muted">Loading existing reservations…</p>';
+    try {
+      const res = await fetch(`/api/rooms/${roomId}/availability?date=${selectedDate}`);
+      const { reservations } = await res.json();
+      if (!reservations.length) {
+        document.getElementById('availabilityView').innerHTML = `<p class="text-muted" style="margin-bottom:.75rem;">No reservations yet on <strong>${selectedDate}</strong>. All time slots are open.</p>`;
+      } else {
+        document.getElementById('availabilityView').innerHTML = `
+          <p class="text-muted" style="margin-bottom:.5rem;">Existing reservations on <strong>${selectedDate}</strong>:</p>
+          <div class="slot-grid">${reservations.map(r => `<span class="slot slot-taken">${r.startTime}–${r.endTime}</span>`).join('')}</div>
+          <p style="margin-top:.5rem;"></p>
+        `;
+      }
+    } catch { document.getElementById('availabilityView').innerHTML = ''; }
+  }
+
+  function closeModal() {
+    document.getElementById('reserveModal').classList.remove('open');
+    document.getElementById('reserveForm').reset();
+    document.getElementById('availabilityView').innerHTML = '';
+  }
+
+  async function handleReserve(e) {
+    e.preventDefault();
+    const btn = document.getElementById('reserveBtn');
+    btn.disabled = true; btn.textContent = 'Reserving…';
+    showModalAlert('', '');
+    try {
+      const res = await fetch('/api/reservations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: parseInt(document.getElementById('reserveRoomId').value),
+          date: selectedDate,
+          startTime: document.getElementById('startTime').value,
+          endTime: document.getElementById('endTime').value,
+          notes: document.getElementById('notes').value,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showModalAlert(data.error || 'Reservation failed', 'error'); return; }
+      closeModal();
+      showAlert('Reservation confirmed! You can view it in My Reservations.', 'success');
+    } catch { showModalAlert('Network error. Please try again.', 'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Confirm Reservation'; }
+  }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    window.location.href = '/';
+  }
+
+  function showAlert(text, type) {
+    const el = document.getElementById('alert');
+    el.textContent = text; el.className = 'alert show alert-' + type;
+    setTimeout(() => el.className = 'alert', 5000);
+  }
+  function showModalAlert(text, type) {
+    const el = document.getElementById('modalAlert');
+    el.textContent = text; el.className = 'alert' + (text ? ' show alert-' + type : '');
+  }
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+</script>
+</body>
+</html>

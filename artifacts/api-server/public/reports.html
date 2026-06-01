@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StudyPod Scheduler — Reports</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="/dashboard" class="navbar-brand">📚 StudyPod</a>
+  <div class="navbar-links">
+    <a href="/dashboard">Rooms</a>
+    <a href="/my-reservations">My Reservations</a>
+    <a href="/admin">Admin</a>
+    <a href="/reports" class="active">Reports</a>
+  </div>
+  <div class="navbar-user">
+    <span id="userName"></span>
+    <button class="btn-logout" onclick="logout()">Sign Out</button>
+  </div>
+</nav>
+
+<div class="page">
+  <h1 class="page-title">Reservation Activity Report</h1>
+
+  <div class="card" style="margin-bottom:1.5rem;">
+    <h2 style="font-size:1rem;font-weight:600;margin-bottom:1rem;">Report Filters</h2>
+    <div class="form-row" style="grid-template-columns:1fr 1fr 1fr auto;align-items:end;">
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">Start Date</label>
+        <input type="date" id="startDate" class="form-control" />
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">End Date</label>
+        <input type="date" id="endDate" class="form-control" />
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">Status</label>
+        <select id="statusFilter" class="form-control">
+          <option value="all">All</option>
+          <option value="active">Active</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="generateReport()" style="margin:0;height:38px;">Generate Report</button>
+    </div>
+  </div>
+
+  <div id="alert" class="alert"></div>
+  <div id="reportOutput"></div>
+</div>
+
+<script>
+  (async () => {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) { window.location.href = '/'; return; }
+    const data = await res.json();
+    if (data.user.role !== 'admin') { window.location.href = '/dashboard'; return; }
+    document.getElementById('userName').textContent = data.user.name;
+    const today = new Date().toISOString().split('T')[0];
+    const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+    document.getElementById('startDate').value = monthAgo;
+    document.getElementById('endDate').value = today;
+    generateReport();
+  })();
+
+  async function generateReport() {
+    document.getElementById('reportOutput').innerHTML = '<div class="loading">Generating report…</div>';
+    const params = new URLSearchParams();
+    const s = document.getElementById('startDate').value;
+    const e = document.getElementById('endDate').value;
+    const st = document.getElementById('statusFilter').value;
+    if (s) params.set('startDate', s);
+    if (e) params.set('endDate', e);
+    if (st !== 'all') params.set('status', st);
+    try {
+      const res = await fetch('/api/reports/reservations?' + params);
+      if (!res.ok) throw new Error();
+      const report = await res.json();
+
+      const active = report.data.filter(r => r.status === 'active').length;
+      const cancelled = report.data.filter(r => r.status === 'cancelled').length;
+
+      document.getElementById('reportOutput').innerHTML = `
+        <div class="report-header">
+          <h2>${esc(report.title)}</h2>
+          <p>Generated: ${new Date(report.generatedAt).toLocaleString()} &nbsp;|&nbsp;
+             Filters: ${s || 'All dates'} – ${e || 'All dates'} &nbsp;|&nbsp; Status: ${st}</p>
+        </div>
+        <div class="report-body">
+          <div class="report-summary">
+            <span>Total Records: <strong>${report.totalRecords}</strong></span>
+            <span>Active: <strong>${active}</strong></span>
+            <span>Cancelled: <strong>${cancelled}</strong></span>
+          </div>
+          ${report.data.length ? `
+          <div class="table-wrapper" style="border:none;border-radius:0;">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Student Name</th>
+                  <th>Student Email</th>
+                  <th>Room</th>
+                  <th>Capacity</th>
+                  <th>Date</th>
+                  <th>Start Time</th>
+                  <th>End Time</th>
+                  <th>Status</th>
+                  <th>Notes</th>
+                  <th>Booked At</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${report.data.map(r => `
+                  <tr>
+                    <td class="text-muted">${r.id}</td>
+                    <td><strong>${esc(r.userName || '—')}</strong></td>
+                    <td class="text-muted">${esc(r.userEmail || '—')}</td>
+                    <td>${esc(r.roomName || '—')}</td>
+                    <td>${r.roomCapacity || '—'}</td>
+                    <td>${r.date}</td>
+                    <td>${r.startTime}</td>
+                    <td>${r.endTime}</td>
+                    <td><span class="badge badge-${r.status}">${r.status}</span></td>
+                    <td>${r.notes ? esc(r.notes) : '<span class="text-muted">—</span>'}</td>
+                    <td class="text-muted">${new Date(r.createdAt).toLocaleString()}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>` : `
+          <div class="empty-state">
+            <h3>No records found</h3>
+            <p>Try adjusting your filter criteria.</p>
+          </div>`}
+        </div>`;
+    } catch { document.getElementById('reportOutput').innerHTML = '<div class="empty-state"><h3>Failed to generate report.</h3></div>'; }
+  }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    window.location.href = '/';
+  }
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+</script>
+</body>
+</html>

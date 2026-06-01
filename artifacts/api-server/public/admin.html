@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StudyPod Scheduler — Admin</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="/dashboard" class="navbar-brand">📚 StudyPod</a>
+  <div class="navbar-links">
+    <a href="/dashboard">Rooms</a>
+    <a href="/my-reservations">My Reservations</a>
+    <a href="/admin" class="active">Admin</a>
+    <a href="/reports">Reports</a>
+  </div>
+  <div class="navbar-user">
+    <span id="userName"></span>
+    <button class="btn-logout" onclick="logout()">Sign Out</button>
+  </div>
+</nav>
+
+<div class="page">
+  <h1 class="page-title">Admin Dashboard</h1>
+  <div id="alert" class="alert"></div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('rooms')">Manage Rooms</div>
+    <div class="tab" onclick="switchTab('reservations')">All Reservations</div>
+  </div>
+
+  <!-- ── Rooms Tab ──────────────────────────────────────────────── -->
+  <div id="tab-rooms" class="tab-panel active">
+    <div class="toolbar">
+      <h2 style="font-size:1rem;font-weight:600;flex:1;">Study Rooms</h2>
+      <button class="btn btn-primary" onclick="openRoomModal()">+ Add Room</button>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr><th>Room Name</th><th>Capacity</th><th>Description</th><th>Status</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody id="roomsBody"><tr><td colspan="6" class="loading">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Reservations Tab ───────────────────────────────────────── -->
+  <div id="tab-reservations" class="tab-panel">
+    <div class="toolbar">
+      <input type="text" id="searchInput" class="form-control search-box" placeholder="Search by student or room name…" oninput="searchReservations()" />
+      <select id="statusFilter" class="form-control" style="width:auto;" onchange="searchReservations()">
+        <option value="all">All statuses</option>
+        <option value="active">Active</option>
+        <option value="cancelled">Cancelled</option>
+      </select>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr><th>Student</th><th>Room</th><th>Date</th><th>Time</th><th>Notes</th><th>Status</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody id="resBody"><tr><td colspan="8" class="loading">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Room Modal -->
+<div class="modal-overlay" id="roomModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title" id="roomModalTitle">Add Room</h2>
+      <button class="modal-close" onclick="closeRoomModal()">✕</button>
+    </div>
+    <div id="roomModalAlert" class="alert"></div>
+    <form id="roomForm" onsubmit="handleRoomSave(event)">
+      <input type="hidden" id="editRoomId" />
+      <div class="form-group">
+        <label class="form-label">Room Name</label>
+        <input type="text" id="roomName" class="form-control" placeholder="e.g. Study Pod A" required />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Capacity</label>
+        <input type="number" id="roomCapacity" class="form-control" placeholder="e.g. 4" min="1" max="100" required />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <input type="text" id="roomDescription" class="form-control" placeholder="Optional description" maxlength="200" />
+      </div>
+      <div class="form-group" id="activeGroup" style="display:none;">
+        <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;">
+          <input type="checkbox" id="roomActive" checked /> Room is active (visible to students)
+        </label>
+      </div>
+      <div style="display:flex;gap:.75rem;justify-content:flex-end;">
+        <button type="button" class="btn btn-ghost" onclick="closeRoomModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="roomSaveBtn">Save Room</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  let searchTimer;
+
+  (async () => {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) { window.location.href = '/'; return; }
+    const data = await res.json();
+    if (data.user.role !== 'admin') { window.location.href = '/dashboard'; return; }
+    document.getElementById('userName').textContent = data.user.name;
+    loadRooms();
+    loadReservations();
+  })();
+
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', (i === 0) === (name === 'rooms')));
+    document.getElementById('tab-rooms').classList.toggle('active', name === 'rooms');
+    document.getElementById('tab-reservations').classList.toggle('active', name === 'reservations');
+  }
+
+  async function loadRooms() {
+    try {
+      const res = await fetch('/api/admin/rooms');
+      const { rooms } = await res.json();
+      document.getElementById('roomsBody').innerHTML = rooms.length
+        ? rooms.map(r => `
+          <tr>
+            <td><strong>${esc(r.name)}</strong></td>
+            <td>${r.capacity}</td>
+            <td>${r.description ? esc(r.description) : '<span class="text-muted">—</span>'}</td>
+            <td><span class="badge ${r.isActive ? 'badge-active' : 'badge-inactive'}">${r.isActive ? 'Active' : 'Inactive'}</span></td>
+            <td class="text-muted">${new Date(r.createdAt).toLocaleDateString()}</td>
+            <td>
+              <div style="display:flex;gap:.5rem;">
+                <button class="btn btn-outline btn-sm" onclick='editRoom(${JSON.stringify(r)})'>Edit</button>
+                ${r.isActive ? `<button class="btn btn-danger btn-sm" onclick="deactivateRoom(${r.id})">Deactivate</button>` : ''}
+              </div>
+            </td>
+          </tr>`).join('')
+        : '<tr><td colspan="6" class="empty-state" style="padding:2rem;">No rooms found.</td></tr>';
+    } catch { showAlert('Failed to load rooms.', 'error'); }
+  }
+
+  async function loadReservations(search, status) {
+    let url = '/api/admin/reservations';
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (status && status !== 'all') params.set('status', status);
+    if (params.toString()) url += '?' + params;
+    try {
+      const res = await fetch(url);
+      const { reservations } = await res.json();
+      document.getElementById('resBody').innerHTML = reservations.length
+        ? reservations.map(r => `
+          <tr>
+            <td><strong>${esc(r.userName || '—')}</strong><br><span class="text-muted">${esc(r.userEmail || '')}</span></td>
+            <td>${esc(r.roomName || '—')}</td>
+            <td>${r.date}</td>
+            <td>${r.startTime} – ${r.endTime}</td>
+            <td>${r.notes ? esc(r.notes) : '<span class="text-muted">—</span>'}</td>
+            <td><span class="badge badge-${r.status}">${r.status}</span></td>
+            <td class="text-muted">${new Date(r.createdAt).toLocaleString()}</td>
+            <td>${r.status === 'active' ? `<button class="btn btn-danger btn-sm" onclick="cancelRes(${r.id})">Cancel</button>` : ''}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--text-muted);">No reservations found.</td></tr>';
+    } catch { showAlert('Failed to load reservations.', 'error'); }
+  }
+
+  function searchReservations() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      loadReservations(document.getElementById('searchInput').value, document.getElementById('statusFilter').value);
+    }, 300);
+  }
+
+  async function cancelRes(id) {
+    if (!confirm('Cancel this reservation?')) return;
+    const res = await fetch('/api/admin/reservations/' + id, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) { showAlert(data.error, 'error'); return; }
+    showAlert('Reservation cancelled.', 'success');
+    loadReservations(document.getElementById('searchInput').value, document.getElementById('statusFilter').value);
+  }
+
+  function openRoomModal() {
+    document.getElementById('editRoomId').value = '';
+    document.getElementById('roomModalTitle').textContent = 'Add New Room';
+    document.getElementById('roomForm').reset();
+    document.getElementById('activeGroup').style.display = 'none';
+    document.getElementById('roomSaveBtn').textContent = 'Add Room';
+    document.getElementById('roomModalAlert').className = 'alert';
+    document.getElementById('roomModal').classList.add('open');
+  }
+
+  function editRoom(room) {
+    document.getElementById('editRoomId').value = room.id;
+    document.getElementById('roomModalTitle').textContent = 'Edit Room';
+    document.getElementById('roomName').value = room.name;
+    document.getElementById('roomCapacity').value = room.capacity;
+    document.getElementById('roomDescription').value = room.description || '';
+    document.getElementById('roomActive').checked = room.isActive;
+    document.getElementById('activeGroup').style.display = '';
+    document.getElementById('roomSaveBtn').textContent = 'Save Changes';
+    document.getElementById('roomModalAlert').className = 'alert';
+    document.getElementById('roomModal').classList.add('open');
+  }
+
+  function closeRoomModal() {
+    document.getElementById('roomModal').classList.remove('open');
+  }
+
+  async function handleRoomSave(e) {
+    e.preventDefault();
+    const id = document.getElementById('editRoomId').value;
+    const btn = document.getElementById('roomSaveBtn');
+    btn.disabled = true;
+    const body = {
+      name: document.getElementById('roomName').value,
+      capacity: parseInt(document.getElementById('roomCapacity').value),
+      description: document.getElementById('roomDescription').value,
+    };
+    if (id) body.isActive = document.getElementById('roomActive').checked;
+    try {
+      const res = await fetch(id ? '/api/admin/rooms/' + id : '/api/admin/rooms', {
+        method: id ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const el = document.getElementById('roomModalAlert');
+        el.textContent = data.error || 'Save failed'; el.className = 'alert show alert-error';
+        return;
+      }
+      closeRoomModal();
+      showAlert(id ? 'Room updated.' : 'Room added.', 'success');
+      loadRooms();
+    } catch {
+      const el = document.getElementById('roomModalAlert');
+      el.textContent = 'Network error.'; el.className = 'alert show alert-error';
+    } finally { btn.disabled = false; }
+  }
+
+  async function deactivateRoom(id) {
+    if (!confirm('Deactivate this room? Students will no longer see it.')) return;
+    const res = await fetch('/api/admin/rooms/' + id, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) { showAlert(data.error, 'error'); return; }
+    showAlert('Room deactivated.', 'success');
+    loadRooms();
+  }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    window.location.href = '/';
+  }
+
+  function showAlert(text, type) {
+    const el = document.getElementById('alert');
+    el.textContent = text; el.className = 'alert show alert-' + type;
+    setTimeout(() => el.className = 'alert', 5000);
+  }
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+</script>
+</body>
+</html>
